@@ -1,33 +1,73 @@
-function generateSmoothPath(points) {
-  if (points.length === 0) return "";
-  if (points.length === 1) {
-    return `M ${points[0].x},${points[0].y}`;
-  }
+import { Line } from "react-chartjs-2";
+import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler } from "chart.js";
 
-  let path = `M ${points[0].x},${points[0].y}`;
-  for (let i = 1; i < points.length; i++) {
-    const p0 = points[i - 1];
-    const p1 = points[i];
-    const cpx = (p0.x + p1.x) / 2;
-    const cpy = (p0.y + p1.y) / 2;
-    path += ` Q ${cpx},${cpy} ${p1.x},${p1.y}`;
-  }
-  return path;
-}
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
 
-function SensorChart({label, value, unit, values, status}) {
-  const chartId = label.replace(/\s+/g, "-").toLowerCase();
-  const chartPoints = values.length
-    ? values.map((entry, index) => {
-        const step = values.length > 1 ? (index / (values.length - 1)) * 100 : 50;
-        const min = Math.min(...values.map((item) => item.value));
-        const max = Math.max(...values.map((item) => item.value));
-        const normalized = max === min ? 0.5 : (entry.value - min) / (max - min);
-        return { x: step, y: 100 - normalized * 70 - 10 };
-      })
-    : [];
-  const smoothPath = generateSmoothPath(chartPoints);
-  const fillPath = values.length > 1 ? `${smoothPath} L 100,100 L 0,100 Z` : "";
+function SensorChart({label, value, unit, data, status, color, fillColor}) {
+  const chartData = {
+    labels: data.map((_, index) => index + 1),
+    datasets: [
+      {
+        label,
+        data,
+        borderColor: color,
+        backgroundColor: fillColor,
+        borderWidth: 2.5,
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        pointHoverRadius: 5,
+        pointBackgroundColor: color,
+        pointBorderColor: "#ffffff",
+        pointBorderWidth: 2,
+      },
+    ],
+  };
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      intersect: false,
+      mode: "index",
+    },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: "rgba(15, 23, 42, 0.9)",
+        padding: 10,
+        borderRadius: 10,
+        titleFont: { size: 12, weight: 700 },
+        bodyFont: { size: 11 },
+        displayColors: false,
+        callbacks: {
+          title: (ctx) => {
+            if (ctx.length > 0) {
+              return `Point ${ctx[0].label}`;
+            }
+            return "";
+          },
+          label: (ctx) => `${ctx.dataset.label}: ${ctx.formattedValue}`,
+        },
+      },
+    },
+    scales: {
+      x: {
+        display: false,
+      },
+      y: {
+        beginAtZero: true,
+        grid: {
+          color: "#e5e7eb",
+          drawBorder: false,
+        },
+        ticks: {
+          color: "#6b7280",
+          font: { size: 10 },
+        },
+      },
+    },
+  };
 
   return (
     <div className="sensor-card">
@@ -38,26 +78,8 @@ function SensorChart({label, value, unit, values, status}) {
       <div className="sensor-value">
         {value ?? "--"} <span>{unit}</span>
       </div>
-      <div className="sensor-chart">
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-          <defs>
-            <linearGradient id={`gradient-${chartId}`} x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#2563eb" stopOpacity="0.35" />
-              <stop offset="100%" stopColor="#2563eb" stopOpacity="0.05" />
-            </linearGradient>
-          </defs>
-          {fillPath && <path d={fillPath} fill={`url(#gradient-${chartId})`} />}
-          {smoothPath && (
-            <path
-              d={smoothPath}
-              fill="none"
-              stroke="#1d4ed8"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          )}
-        </svg>
+      <div className="sensor-chart chart-canvas-wrapper">
+        <Line data={chartData} options={chartOptions} />
       </div>
     </div>
   );
@@ -70,9 +92,9 @@ function MonitorDashboard({latestReading, history, activeProfile, onActuatorComm
     light: typeof reading.light === "number" ? reading.light : 0,
   }));
 
-  const temperaturePoints = chartData.map((item) => ({ value: item.temperature }));
-  const turbidityPoints = chartData.map((item) => ({ value: item.turbidity }));
-  const lightPoints = chartData.map((item) => ({ value: item.light }));
+  const temperaturePoints = chartData.map((item) => item.temperature);
+  const turbidityPoints = chartData.map((item) => item.turbidity);
+  const lightPoints = chartData.map((item) => item.light);
 
   return (
     <section className="dashboard-panel">
@@ -92,22 +114,28 @@ function MonitorDashboard({latestReading, history, activeProfile, onActuatorComm
           label="Temperature"
           value={latestReading?.temperature}
           unit="°C"
-          values={temperaturePoints}
+          data={temperaturePoints}
           status={latestReading?.status?.temperature}
+          color="#ef4444"
+          fillColor="rgba(239, 68, 68, 0.14)"
         />
         <SensorChart
           label="Turbidity"
           value={latestReading?.turbidity}
           unit="NTU"
-          values={turbidityPoints}
+          data={turbidityPoints}
           status={latestReading?.status?.turbidity}
+          color="#0ea5e9"
+          fillColor="rgba(14, 165, 233, 0.14)"
         />
         <SensorChart
           label="Light Intensity"
           value={latestReading?.light}
           unit="lux"
-          values={lightPoints}
+          data={lightPoints}
           status={latestReading?.status?.light}
+          color="#f59e0b"
+          fillColor="rgba(245, 158, 11, 0.14)"
         />
       </div>
 
