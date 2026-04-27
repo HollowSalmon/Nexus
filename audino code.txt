@@ -1,0 +1,90 @@
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+/*
+ * Updated Prototype: DS18B20 Temperature Support
+ */
+
+// Pin Definitions
+const int LDR_PIN = 3;
+const int TEMP_PIN = 2; // DS18B20 Data Pin
+const int TURB_PIN = A4;
+
+const int FILTER_RELAY = 12;
+const int COOLER_RELAY = 8;
+const int LIGHT_RELAY = 4;
+
+// Setup OneWire and DallasTemperature
+OneWire oneWire(TEMP_PIN);
+DallasTemperature sensors(&oneWire);
+
+void setup() {
+  Serial.begin(9600);
+  
+  // Initialize Sensor Library
+  sensors.begin();
+
+  // Initialize Relays
+  pinMode(FILTER_RELAY, OUTPUT);
+  pinMode(COOLER_RELAY, OUTPUT);
+  pinMode(LIGHT_RELAY, OUTPUT);
+
+  // Initialize LDR
+  pinMode(LDR_PIN, INPUT);
+
+  // Default Relays to OFF
+  digitalWrite(FILTER_RELAY, HIGH);
+  digitalWrite(COOLER_RELAY, LOW);
+  digitalWrite(LIGHT_RELAY, HIGH);
+
+  Serial.println("System Ready.");
+  Serial.println("Commands: F/f (Filter), C/c (Cooler), L/l (Light)");
+}
+
+void loop() {
+  readSensors();
+  checkSerial();
+  delay(1500); // Increased delay to allow sensor conversion
+}
+
+void readSensors() {
+  // 1. Temperature (DS18B20)
+  sensors.requestTemperatures(); 
+  float tempC = sensors.getTempCByIndex(0);
+
+  // 2. LDR (Light Intensity)
+  int ldrStatus = digitalRead(LDR_PIN);
+  
+  // 3. Turbidity 
+  int rawTurb = analogRead(TURB_PIN);
+  float voltage = rawTurb * (5.0 / 1023.0);
+  float ntu = -1120.4 * (voltage * voltage) + 5742.3 * voltage - 4352.9;
+  if(ntu < 0) ntu = 0;
+
+  // Serial Output
+  Serial.println("--- Environment Data ---");
+  Serial.print("Temperature: "); 
+  if (tempC == -127.00) {
+    Serial.println("ERR (Check Wiring)");
+  } else {
+    Serial.print(tempC); Serial.println(" °C");
+  }
+  
+  Serial.print("Light: "); Serial.println(ldrStatus == HIGH ? "Detected" : "None");
+  Serial.print("Turbidity: "); Serial.print(ntu); Serial.println(" NTU");
+  Serial.println("------------------------");
+}
+
+void checkSerial() {
+  if (Serial.available() > 0) {
+    char command = Serial.read();
+    switch (command) {
+      case 'F': digitalWrite(FILTER_RELAY, HIGH); Serial.println(">> Filter ON"); break;
+      case 'f': digitalWrite(FILTER_RELAY, LOW);  Serial.println(">> Filter OFF"); break;
+      case 'C': digitalWrite(COOLER_RELAY, HIGH); Serial.println(">> Cooler ON"); break;
+      case 'c': digitalWrite(COOLER_RELAY, LOW);  Serial.println(">> Cooler OFF"); break;
+      case 'L': digitalWrite(LIGHT_RELAY, LOW);  Serial.println(">> Light ON"); break;
+      case 'l': digitalWrite(LIGHT_RELAY, HIGH);   Serial.println(">> Light OFF"); break;
+    }
+  }
+}

@@ -11,8 +11,7 @@ class DatasetProfile(BaseModel):
     temperature_max: float = Field(..., alias="temperatureMax")
     turbidity_min: float = Field(..., alias="turbidityMin")
     turbidity_max: float = Field(..., alias="turbidityMax")
-    light_min: float = Field(..., alias="lightMin")
-    light_max: float = Field(..., alias="lightMax")
+    time_in_light: float = Field(..., alias="timeInLight")
     guidelines: str
 
     class Config:
@@ -28,8 +27,7 @@ class DatasetManager:
         "temperatureMax",
         "turbidityMin",
         "turbidityMax",
-        "lightMin",
-        "lightMax",
+        "timeInLight",
         "guidelines",
     ]
 
@@ -57,8 +55,7 @@ class DatasetManager:
                 "temperatureMax": "24.0",
                 "turbidityMin": "1.0",
                 "turbidityMax": "4.0",
-                "lightMin": "120.0",
-                "lightMax": "250.0",
+                "timeInLight": "8.0",
                 "guidelines": "Keep water cool and clear. Avoid bright direct light.",
             },
             {
@@ -67,8 +64,7 @@ class DatasetManager:
                 "temperatureMax": "28.0",
                 "turbidityMin": "2.0",
                 "turbidityMax": "6.0",
-                "lightMin": "80.0",
-                "lightMax": "140.0",
+                "timeInLight": "10.0",
                 "guidelines": "Maintain warm water and moderate light. Keep current steady.",
             },
         ]

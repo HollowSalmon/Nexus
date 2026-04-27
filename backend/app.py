@@ -1,6 +1,8 @@
 import asyncio
 import csv
 import json
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -9,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, ValidationError
 
 from backend.datasets import DatasetManager, DatasetProfile
-from backend.sensors import SensorSimulator
+from backend.sensors import SerialSensorReader
 
 DATA_DIR = Path(__file__).parent / "data"
 SENSOR_LOG_PATH = DATA_DIR / "sensor_log.csv"
@@ -26,10 +28,52 @@ def ensure_sensor_log_file() -> None:
                 "light",
                 "status_temperature",
                 "status_turbidity",
-                "status_light",
                 "status_overall",
+                "actuator_cooler",
+                "actuator_filter",
+                "actuator_light",
             ])
             writer.writeheader()
+    else:
+        # Check if file has header
+        with SENSOR_LOG_PATH.open("r", encoding="utf-8") as handle:
+            first_line = handle.readline().strip()
+            if not first_line.startswith("timestamp"):
+                # File exists but no header, recreate it
+                temp_data = []
+                handle.seek(0)
+                reader = csv.reader(handle)
+                for row in reader:
+                    if len(row) == 10:  # Assume data rows have 10 columns
+                        temp_data.append(row)
+                
+                with SENSOR_LOG_PATH.open("w", newline="", encoding="utf-8") as write_handle:
+                    writer = csv.DictWriter(write_handle, fieldnames=[
+                        "timestamp",
+                        "temperature",
+                        "turbidity",
+                        "light",
+                        "status_temperature",
+                        "status_turbidity",
+                        "status_overall",
+                        "actuator_cooler",
+                        "actuator_filter",
+                        "actuator_light",
+                    ])
+                    writer.writeheader()
+                    for row in temp_data:
+                        writer.writerow({
+                            "timestamp": row[0],
+                            "temperature": row[1],
+                            "turbidity": row[2],
+                            "light": row[3],
+                            "status_temperature": row[4],
+                            "status_turbidity": row[5],
+                            "status_overall": row[6],
+                            "actuator_cooler": row[7],
+                            "actuator_filter": row[8],
+                            "actuator_light": row[9],
+                        })
 
 
 def log_sensor_reading(reading: Dict[str, Any]) -> None:
@@ -41,8 +85,10 @@ def log_sensor_reading(reading: Dict[str, Any]) -> None:
             "light",
             "status_temperature",
             "status_turbidity",
-            "status_light",
             "status_overall",
+            "actuator_cooler",
+            "actuator_filter",
+            "actuator_light",
         ])
         writer.writerow({
             "timestamp": reading["timestamp"],
@@ -51,8 +97,10 @@ def log_sensor_reading(reading: Dict[str, Any]) -> None:
             "light": reading["light"],
             "status_temperature": reading["status"]["temperature"],
             "status_turbidity": reading["status"]["turbidity"],
-            "status_light": reading["status"]["light"],
             "status_overall": reading["status"]["overall"],
+            "actuator_cooler": "on" if actuator_state["cooler_active"] else "off",
+            "actuator_filter": "on" if actuator_state["filter_active"] else "off",
+            "actuator_light": "on" if actuator_state["light_active"] else "off",
         })
 
 app = FastAPI(title="Nexus Monitoring & Control Prototype", version="0.1.0")
@@ -67,9 +115,23 @@ dataset_manager = DatasetManager()
 dataset_manager.ensure_csv_file()
 ensure_sensor_log_file()
 
-sensor_simulator = SensorSimulator(profile_provider=dataset_manager.get_active_profile)
+sensor_simulator = SerialSensorReader(profile_provider=dataset_manager.get_active_profile)
 connections: List[WebSocket] = []
 connections_lock = asyncio.Lock()
+
+# ========== ACTUATOR STATE MANAGEMENT ==========
+actuator_state = {
+    "cooler_active": False,
+    "filter_active": False,
+    "light_active": False,
+    "cooler_last_toggle": 0.0,
+    "filter_last_toggle": 0.0,
+    "light_last_toggle": 0.0,
+    "daily_light_seconds": 0.0,
+    "last_midnight": None,
+}
+actuator_state_lock = asyncio.Lock()
+MIN_CYCLE_TIME = 300  # seconds between actuator toggles
 
 
 class DatasetCreateRequest(BaseModel):
@@ -78,8 +140,7 @@ class DatasetCreateRequest(BaseModel):
     temperature_max: float = Field(..., alias="temperatureMax")
     turbidity_min: float = Field(..., alias="turbidityMin")
     turbidity_max: float = Field(..., alias="turbidityMax")
-    light_min: float = Field(..., alias="lightMin")
-    light_max: float = Field(..., alias="lightMax")
+    time_in_light: float = Field(..., alias="timeInLight")
     guidelines: str
 
     class Config:
@@ -105,10 +166,127 @@ async def startup_event():
     asyncio.create_task(sensor_loop())
 
 
+# ========== ACTUATOR CONTROL FUNCTIONS ==========
+def reset_daily_light_if_needed():
+    """Reset daily light tracking at UTC midnight."""
+    global actuator_state
+    now = datetime.utcnow()
+    today = now.date()
+    if actuator_state["last_midnight"] != today:
+        actuator_state["daily_light_seconds"] = 0.0
+        actuator_state["last_midnight"] = today
+
+
+def evaluate_actuators(reading: Dict[str, Any], profile):
+    """Evaluate which actuators should be on/off based on sensor readings."""
+    if not profile:
+        return {"cooler_on": False, "filter_on": False, "light_on": False}
+    
+    temperature = reading.get("temperature", 22.0)
+    turbidity = reading.get("turbidity", 3.0)
+    light = reading.get("light", 0.0)
+    
+    new_states = {}
+    
+    # Cooler: activate if temp > max
+    if temperature > profile.temperature_max:
+        new_states["cooler_on"] = True
+    elif temperature < (profile.temperature_min + profile.temperature_max) / 2:
+        new_states["cooler_on"] = False
+    else:
+        new_states["cooler_on"] = actuator_state["cooler_active"]
+    
+    # Filter: activate if turbidity > max
+    if turbidity > profile.turbidity_max:
+        new_states["filter_on"] = True
+    elif turbidity < (profile.turbidity_min + profile.turbidity_max) / 2:
+        new_states["filter_on"] = False
+    else:
+        new_states["filter_on"] = actuator_state["filter_active"]
+    
+    # Light: activate if no light detected and within daily limit
+    time_in_light_hours = getattr(profile, "time_in_light", 12.0)
+    if light == 0.0 and actuator_state["daily_light_seconds"] < (time_in_light_hours * 3600):
+        new_states["light_on"] = True
+    else:
+        new_states["light_on"] = False
+    
+    return new_states
+
+
+def apply_actuator_commands(new_states: Dict[str, bool], current_time: float):
+    """Apply new actuator commands with cycle prevention."""
+    global actuator_state
+    changes = False
+    
+    mapping = {
+        "cooler_on": "cooler_active",
+        "filter_on": "filter_active", 
+        "light_on": "light_active"
+    }
+    
+    for actuator, desired_state in new_states.items():
+        key_active = mapping[actuator]
+        key_toggle = f"{key_active.replace('_active', '_last_toggle')}"
+        
+        if desired_state != actuator_state[key_active]:
+            if current_time - actuator_state[key_toggle] >= MIN_CYCLE_TIME:
+                actuator_state[key_active] = desired_state
+                actuator_state[key_toggle] = current_time
+                changes = True
+                # Send serial command
+                send_serial_command(actuator.replace("_on", ""), desired_state)
+    
+    return changes
+
+
+def send_serial_command(actuator: str, state: bool):
+    """Send control command to Arduino via serial."""
+    command_map = {
+        "cooler": "C" if state else "c",
+        "filter": "F" if state else "f", 
+        "light": "L" if state else "l"
+    }
+    command = command_map.get(actuator)
+    if command and sensor_simulator.serial_connection:
+        try:
+            sensor_simulator.serial_connection.write(command.encode())
+        except Exception as e:
+            print(f"Failed to send serial command: {e}")
+
+
 async def sensor_loop() -> None:
     async for reading in sensor_simulator.read_stream():
+        current_time = time.time()
+        profile = dataset_manager.get_active_profile()
+        
+        # Reset daily light if needed
+        reset_daily_light_if_needed()
+        
+        # Evaluate actuator states
+        new_states = evaluate_actuators(reading, profile)
+        
+        # Apply actuator commands with cycle prevention
+        changes = apply_actuator_commands(new_states, current_time)
+        
+        # Track light usage
+        if actuator_state["light_active"]:
+            actuator_state["daily_light_seconds"] += 1  # 1 second increment
+        
+        # Log sensor reading with actuator states
         log_sensor_reading(reading)
-        payload = {"type": "sensor_update", "data": reading}
+        
+        # Broadcast updates
+        payload = {
+            "type": "sensor_update", 
+            "data": reading,
+            "actuators": {
+                "cooler_active": actuator_state["cooler_active"],
+                "filter_active": actuator_state["filter_active"],
+                "light_active": actuator_state["light_active"],
+                "daily_light_hours": round(actuator_state["daily_light_seconds"] / 3600, 2),
+            }
+        }
         text = json.dumps(payload)
         async with connections_lock:
             for websocket in list(connections):
@@ -131,8 +309,7 @@ def create_dataset(request: DatasetCreateRequest) -> Dict[str, Any]:
         temperature_max=request.temperature_max,
         turbidity_min=request.turbidity_min,
         turbidity_max=request.turbidity_max,
-        light_min=request.light_min,
-        light_max=request.light_max,
+        time_in_light=request.time_in_light,
         guidelines=request.guidelines,
     )
     try:
@@ -177,8 +354,12 @@ def get_sensor_history(limit: int = 200) -> List[Dict[str, Any]]:
                     "status": {
                         "temperature": row["status_temperature"],
                         "turbidity": row["status_turbidity"],
-                        "light": row["status_light"],
                         "overall": row["status_overall"],
+                    },
+                    "actuators": {
+                        "cooler": row.get("actuator_cooler", "off"),
+                        "filter": row.get("actuator_filter", "off"),
+                        "light": row.get("actuator_light", "off"),
                     },
                 })
             except Exception:
@@ -273,6 +454,41 @@ async def handle_command(message: CommandMessage) -> CommandResponse:
             result="ok",
             message=f"Actuator {actuator} command '{action}' received.",
             payload={"actuator": actuator, "action": action},
+        )
+
+    if message.command == "manual_actuator_command":
+        actuator = message.payload.get("actuator")
+        action = message.payload.get("action")
+        if not actuator or not action:
+            return CommandResponse(
+                command=message.command,
+                result="error",
+                message="Missing actuator or action.",
+            )
+        if actuator not in ["cooler", "filter", "light"]:
+            return CommandResponse(
+                command=message.command,
+                result="error",
+                message="Invalid actuator. Must be 'cooler', 'filter', or 'light'.",
+            )
+        if action not in ["on", "off"]:
+            return CommandResponse(
+                command=message.command,
+                result="error",
+                message="Invalid action. Must be 'on' or 'off'.",
+            )
+        
+        # Manual override - bypass cycle timer
+        state = action == "on"
+        actuator_state[f"{actuator}_active"] = state
+        actuator_state[f"{actuator}_last_toggle"] = time.time()
+        send_serial_command(actuator, state)
+        
+        return CommandResponse(
+            command=message.command,
+            result="ok",
+            message=f"Actuator {actuator} set to {action} (manual override).",
+            payload={"actuator": actuator, "action": action, "manual": True},
         )
 
     return CommandResponse(
