@@ -144,7 +144,7 @@ class DatasetCreateRequest(BaseModel):
     guidelines: str
 
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True
 
 
 class CommandMessage(BaseModel):
@@ -255,6 +255,51 @@ def send_serial_command(actuator: str, state: bool):
             print(f"Failed to send serial command: {e}")
 
 
+async def run_actuator_init_sequence():
+    """Run actuator initialization sequence on profile load:
+    1. Turn ON all actuators (cooler, filter, light)
+    2. Turn OFF light after 5 seconds
+    3. Turn OFF cooler after 60 seconds total
+    4. Turn OFF filter after 70 seconds total
+    """
+    try:
+        # Update actuator_state for all actuators
+        global actuator_state
+        current_time = time.time()
+        
+        # Step 1: Turn on all actuators
+        send_serial_command("cooler", True)
+        send_serial_command("filter", True)
+        send_serial_command("light", True)
+        
+        actuator_state["cooler_active"] = True
+        actuator_state["cooler_last_toggle"] = current_time
+        actuator_state["filter_active"] = True
+        actuator_state["filter_last_toggle"] = current_time
+        actuator_state["light_active"] = True
+        actuator_state["light_last_toggle"] = current_time
+        
+        # Step 2: Turn off light after 5 seconds
+        await asyncio.sleep(5)
+        send_serial_command("light", False)
+        actuator_state["light_active"] = False
+        actuator_state["light_last_toggle"] = time.time()
+        
+        # Step 3: Turn off cooler after 60 seconds total
+        await asyncio.sleep(55)
+        send_serial_command("cooler", False)
+        actuator_state["cooler_active"] = False
+        actuator_state["cooler_last_toggle"] = time.time()
+        
+        # Step 4: Turn off filter after 70 seconds total
+        await asyncio.sleep(10)
+        send_serial_command("filter", False)
+        actuator_state["filter_active"] = False
+        actuator_state["filter_last_toggle"] = time.time()
+    except Exception as e:
+        print(f"Error in actuator init sequence: {e}")
+
+
 async def sensor_loop() -> None:
     async for reading in sensor_simulator.read_stream():
         current_time = time.time()
@@ -298,25 +343,27 @@ async def sensor_loop() -> None:
 
 @app.get("/api/datasets")
 def list_datasets() -> List[Dict[str, Any]]:
-    return [profile.dict(by_alias=True) for profile in dataset_manager.list_profiles()]
+    return [profile.model_dump(by_alias=True) for profile in dataset_manager.list_profiles()]
 
 
 @app.post("/api/datasets")
 def create_dataset(request: DatasetCreateRequest) -> Dict[str, Any]:
-    profile = DatasetProfile(
-        species_name=request.species_name,
-        temperature_min=request.temperature_min,
-        temperature_max=request.temperature_max,
-        turbidity_min=request.turbidity_min,
-        turbidity_max=request.turbidity_max,
-        time_in_light=request.time_in_light,
-        guidelines=request.guidelines,
-    )
     try:
+        profile = DatasetProfile(
+            species_name=request.species_name,
+            temperature_min=request.temperature_min,
+            temperature_max=request.temperature_max,
+            turbidity_min=request.turbidity_min,
+            turbidity_max=request.turbidity_max,
+            time_in_light=request.time_in_light,
+            guidelines=request.guidelines,
+        )
         dataset_manager.add_profile(profile)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return {"status": "ok", "profile": profile.dict(by_alias=True)}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Validation error: {str(exc)}")
+    return {"status": "ok", "profile": profile.model_dump(by_alias=True)}
 
 
 @app.get("/api/datasets/active")
@@ -324,7 +371,7 @@ def get_active_dataset() -> Dict[str, Any]:
     profile = dataset_manager.get_active_profile()
     if not profile:
         raise HTTPException(status_code=404, detail="No active profile set")
-    return profile.dict(by_alias=True)
+    return profile.model_dump(by_alias=True)
 
 
 @app.post("/api/datasets/load")
@@ -334,7 +381,7 @@ def load_dataset(name: str) -> Dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     profile = dataset_manager.get_active_profile()
-    return {"status": "ok", "active": profile.dict(by_alias=True)}
+    return {"status": "ok", "active": profile.model_dump(by_alias=True)}
 
 
 @app.get("/api/sensor-history")
@@ -377,7 +424,7 @@ async def websocket_endpoint(websocket: WebSocket):
         init_profile = dataset_manager.get_active_profile()
         init_payload = {
             "type": "connection_open",
-            "activeProfile": init_profile.dict(by_alias=True) if init_profile else None,
+            "activeProfile": init_profile.model_dump(by_alias=True) if init_profile else None,
         }
         await websocket.send_text(json.dumps(init_payload))
 
@@ -424,11 +471,15 @@ async def handle_command(message: CommandMessage) -> CommandResponse:
                 message=str(exc),
             )
         profile = dataset_manager.get_active_profile()
+        
+        # Trigger actuator initialization sequence in background
+        asyncio.create_task(run_actuator_init_sequence())
+        
         return CommandResponse(
             command=message.command,
             result="ok",
-            message=f"Active profile set to {name}.",
-            payload={"activeProfile": profile.dict(by_alias=True) if profile else {}},
+            message=f"Active profile set to {name}. Starting actuator initialization sequence.",
+            payload={"activeProfile": profile.model_dump(by_alias=True) if profile else {}},
         )
 
     if message.command == "current_status":
@@ -437,7 +488,7 @@ async def handle_command(message: CommandMessage) -> CommandResponse:
             command=message.command,
             result="ok",
             message="Current profile status.",
-            payload={"activeProfile": profile.dict(by_alias=True) if profile else None},
+            payload={"activeProfile": profile.model_dump(by_alias=True) if profile else None},
         )
 
     if message.command == "actuator_control":

@@ -15,7 +15,7 @@ class DatasetProfile(BaseModel):
     guidelines: str
 
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True
 
 
 class DatasetManager:
@@ -91,7 +91,7 @@ class DatasetManager:
             raise ValueError(f"Profile '{profile.species_name}' already exists.")
         with self.csv_path.open("a", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=self.HEADER)
-            writer.writerow(profile.dict(by_alias=True))
+            writer.writerow(profile.model_dump(by_alias=True))
 
     def get_profile(self, name: str) -> Optional[DatasetProfile]:
         for profile in self.list_profiles():
