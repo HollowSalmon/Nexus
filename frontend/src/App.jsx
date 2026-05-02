@@ -4,6 +4,7 @@ import DatasetManager from "./components/DatasetManager.jsx";
 import Analytics from "./components/Analytics.jsx";
 import { fetchDatasets, createDataset, fetchSensorHistory } from "./services/api.js";
 import { createWebSocketClient } from "./services/wsClient.js";
+import { playAlertSound, shouldPlayAlert } from "./services/audioAlert.js";
 
 const WS_URL = import.meta.env.VITE_WS_URL ?? `ws://${window.location.hostname}:8000/ws`;
 
@@ -68,6 +69,13 @@ function App() {
     try {
       const message = typeof rawData === "string" ? JSON.parse(rawData) : JSON.parse(rawData.data);
       if (message.type === "sensor_update") {
+        // Check for status changes and play alerts
+        const previousOverallStatus = latestReading?.status?.overall;
+        const newOverallStatus = message.data?.status?.overall;
+        if (shouldPlayAlert(previousOverallStatus, newOverallStatus)) {
+          playAlertSound();
+        }
+        
         setLatestReading(message.data);
         setSensorHistory((current) => {
           const next = [...current, message.data].slice(-200);

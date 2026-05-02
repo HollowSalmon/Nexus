@@ -70,7 +70,7 @@ function SensorChart({label, value, unit, data, status, color, fillColor}) {
   };
 
   return (
-    <div className="sensor-card">
+    <div className={`sensor-card ${status}`}>
       <div className="sensor-card-title">
         <div>{label}</div>
         <div className={`sensor-status ${status}`}>{status || "unknown"}</div>
@@ -160,10 +160,54 @@ function MonitorDashboard({latestReading, history, activeProfile, onActuatorComm
       <div className="actuators-section">
         <h3>System Controls</h3>
         <div className="actuators-grid">
-          <button className="actuator-button" type="button" onClick={() => onActuatorCommand("temperature", "increase")}>Raise temperature</button>
-          <button className="actuator-button" type="button" onClick={() => onActuatorCommand("temperature", "decrease")}>Lower temperature</button>
-          <button className="actuator-button" type="button" onClick={() => onActuatorCommand("light", "adjust")}>Adjust light</button>
-          <button className="actuator-button" type="button" onClick={() => onActuatorCommand("flow", "stabilize")}>Stabilize flow</button>
+          <button 
+            className="actuator-button cooler-on" 
+            type="button" 
+            onClick={() => onActuatorCommand("cooler", "on")}
+            title="Turn on cooler to lower temperature"
+          >
+            ❄️ Cooler ON
+          </button>
+          <button 
+            className="actuator-button cooler-off" 
+            type="button" 
+            onClick={() => onActuatorCommand("cooler", "off")}
+            title="Turn off cooler"
+          >
+            ❄️ Cooler OFF
+          </button>
+          <button 
+            className="actuator-button filter-on" 
+            type="button" 
+            onClick={() => onActuatorCommand("filter", "on")}
+            title="Turn on filter to reduce turbidity"
+          >
+            🔄 Filter ON
+          </button>
+          <button 
+            className="actuator-button filter-off" 
+            type="button" 
+            onClick={() => onActuatorCommand("filter", "off")}
+            title="Turn off filter"
+          >
+            🔄 Filter OFF
+          </button>
+          <button 
+            className="actuator-button light-on" 
+            type="button" 
+            onClick={() => onActuatorCommand("light", "on")}
+            title="Turn on light"
+          >
+            💡 Light ON
+          </button>
+          <button 
+            className="actuator-button light-off" 
+            type="button" 
+            onClick={() => onActuatorCommand("light", "off")}
+            title="Turn off light"
+          >
+            💡 Light OFF
+          </button>
         </div>
       </div>
     </section>

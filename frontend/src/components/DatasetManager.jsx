@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 
 function DatasetManager({datasets, activeProfile, onLoadProfile, onCreateProfile}) {
   const [form, setForm] = useState({
@@ -7,10 +7,11 @@ function DatasetManager({datasets, activeProfile, onLoadProfile, onCreateProfile
     temperatureMax: "",
     turbidityMin: "",
     turbidityMax: "",
-    lightMin: "",
-    lightMax: "",
+    timeInLight: "",
     guidelines: "",
   });
+  const [showConfirmation, setShowConfirmation] = useState(false);
+  const confirmationRef = useRef(null);
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -24,18 +25,29 @@ function DatasetManager({datasets, activeProfile, onLoadProfile, onCreateProfile
       temperatureMax: Number(form.temperatureMax),
       turbidityMin: Number(form.turbidityMin),
       turbidityMax: Number(form.turbidityMax),
-      lightMin: Number(form.lightMin),
-      lightMax: Number(form.lightMax),
+      timeInLight: Number(form.timeInLight),
       guidelines: form.guidelines,
     });
+    
+    // Show confirmation
+    setShowConfirmation(true);
+    if (confirmationRef.current) {
+      confirmationRef.current.classList.add("show");
+    }
+    setTimeout(() => {
+      setShowConfirmation(false);
+      if (confirmationRef.current) {
+        confirmationRef.current.classList.remove("show");
+      }
+    }, 2000);
+    
     setForm({
       speciesName: "",
       temperatureMin: "",
       temperatureMax: "",
       turbidityMin: "",
       turbidityMax: "",
-      lightMin: "",
-      lightMax: "",
+      timeInLight: "",
       guidelines: "",
     });
   }
@@ -49,6 +61,12 @@ function DatasetManager({datasets, activeProfile, onLoadProfile, onCreateProfile
         </div>
       </div>
 
+      {showConfirmation && (
+        <div className="confirmation-toast" ref={confirmationRef}>
+          ✓ DONE! Profile added successfully.
+        </div>
+      )}
+
       <div className="dataset-grid">
         <div className="dataset-list">
           <h3>Available profiles</h3>
@@ -57,12 +75,20 @@ function DatasetManager({datasets, activeProfile, onLoadProfile, onCreateProfile
           ) : (
             <ul>
               {datasets.map((dataset) => (
-                <li key={dataset.speciesName}>
-                  <div>
-                    <strong>{dataset.speciesName}</strong>
-                    <span>{dataset.speciesName === activeProfile?.speciesName ? "Active" : ""}</span>
+                <li key={dataset.speciesName} className={dataset.speciesName === activeProfile?.speciesName ? "active-profile" : ""}>
+                  <div className="profile-info">
+                    <input 
+                      type="checkbox" 
+                      checked={dataset.speciesName === activeProfile?.speciesName}
+                      onChange={() => onLoadProfile(dataset.speciesName)}
+                      className="profile-checkbox"
+                    />
+                    <div>
+                      <strong>{dataset.speciesName}</strong>
+                      {dataset.speciesName === activeProfile?.speciesName && <span className="active-badge">● Active</span>}
+                    </div>
                   </div>
-                  <button type="button" onClick={() => onLoadProfile(dataset.speciesName)}>
+                  <button type="button" onClick={() => onLoadProfile(dataset.speciesName)} className="load-button">
                     Load
                   </button>
                 </li>
@@ -94,22 +120,19 @@ function DatasetManager({datasets, activeProfile, onLoadProfile, onCreateProfile
             <input type="number" step="0.1" value={form.turbidityMax} onChange={(event) => updateField("turbidityMax", event.target.value)} required />
           </label>
           <label>
-            Light min (lux)
-            <input type="number" step="0.1" value={form.lightMin} onChange={(event) => updateField("lightMin", event.target.value)} required />
-          </label>
-          <label>
-            Light max (lux)
-            <input type="number" step="0.1" value={form.lightMax} onChange={(event) => updateField("lightMax", event.target.value)} required />
+            Time in Light (hours/day)
+            <input type="number" step="0.1" value={form.timeInLight} onChange={(event) => updateField("timeInLight", event.target.value)} required />
           </label>
           <label>
             Guidelines
             <textarea value={form.guidelines} onChange={(event) => updateField("guidelines", event.target.value)} required />
           </label>
-          <button type="submit">Add profile</button>
+          <button type="submit" className="submit-button">Add profile</button>
         </form>
       </div>
     </section>
   );
 }
+
 
 export default DatasetManager;

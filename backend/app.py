@@ -449,10 +449,43 @@ async def handle_command(message: CommandMessage) -> CommandResponse:
                 result="error",
                 message="Missing actuator or action.",
             )
+        if actuator not in ["cooler", "filter", "light"]:
+            return CommandResponse(
+                command=message.command,
+                result="error",
+                message="Invalid actuator. Must be cooler, filter, or light.",
+            )
+        if action not in ["on", "off"]:
+            return CommandResponse(
+                command=message.command,
+                result="error",
+                message="Invalid action. Must be on or off.",
+            )
+        
+        # Check cycle timer
+        current_time = time.time()
+        state_key = f"{actuator}_active"
+        toggle_key = f"{actuator}_last_toggle"
+        
+        if current_time - actuator_state[toggle_key] < MIN_CYCLE_TIME:
+            remaining = int(MIN_CYCLE_TIME - (current_time - actuator_state[toggle_key]))
+            return CommandResponse(
+                command=message.command,
+                result="error",
+                message=f"Actuator {actuator} is on cooldown. Wait {remaining}s.",
+            )
+        
+        # Apply command
+        desired_state = action == "on"
+        if actuator_state[state_key] != desired_state:
+            actuator_state[state_key] = desired_state
+            actuator_state[toggle_key] = current_time
+            send_serial_command(actuator, desired_state)
+        
         return CommandResponse(
             command=message.command,
             result="ok",
-            message=f"Actuator {actuator} command '{action}' received.",
+            message=f"Actuator {actuator} set to {action}.",
             payload={"actuator": actuator, "action": action},
         )
 

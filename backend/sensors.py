@@ -65,8 +65,23 @@ class SerialSensorReader:
         """Generate dummy sensor reading for testing without Arduino."""
         import random
         profile = self.profile_provider()
-        temperature = round(22.0 + random.uniform(-2.0, 2.0), 1)
-        turbidity = round(max(0.0, 3.0 + random.uniform(-1.0, 1.0)), 2)
+        
+        # Generate data within the profile's acceptable ranges
+        if profile:
+            # Temperature: around middle of range with some variation
+            temp_mid = (profile.temperature_min + profile.temperature_max) / 2
+            temp_variance = (profile.temperature_max - profile.temperature_min) / 4
+            temperature = round(temp_mid + random.uniform(-temp_variance, temp_variance), 1)
+            
+            # Turbidity: around middle of range with some variation
+            turb_mid = (profile.turbidity_min + profile.turbidity_max) / 2
+            turb_variance = (profile.turbidity_max - profile.turbidity_min) / 4
+            turbidity = round(max(0.0, turb_mid + random.uniform(-turb_variance, turb_variance)), 2)
+        else:
+            # Fallback defaults
+            temperature = round(22.0 + random.uniform(-2.0, 2.0), 1)
+            turbidity = round(max(0.0, 3.0 + random.uniform(-1.0, 1.0)), 2)
+        
         light = random.choice([0.0, 1.0])  # Random light state
         
         status = self.evaluate_status(temperature, turbidity, profile)
